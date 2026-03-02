@@ -1,0 +1,32 @@
+import pandas as pd
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+
+
+df=pd.read_excel("sheet.xlsx",sheet_name="IRCTC Stock Price" )
+
+# Strip spaces in column names
+df.columns = df.columns.str.strip()
+
+# Convert numeric columns (remove commas)
+for col in ["Price", "Open", "High", "Low"]:
+    df[col] = df[col].astype(str).str.replace(",", "").astype(float)
+
+# Select X and y (RANDOM CHOICE)
+X = df[["Open"]]      # feature
+y = df["Price"]       # target
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# Train Linear Regression
+reg = LinearRegression().fit(X_train, y_train)
+
+# Predictions
+y_train_pred = reg.predict(X_train)
+
+print("Coefficient:", reg.coef_)
+print("Intercept:", reg.intercept_)
+print("Sample Predictions:", y_train_pred[:10])
