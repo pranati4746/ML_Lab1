@@ -1,0 +1,38 @@
+import pandas as pd
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+df=pd.read_excel("sheet.xlsx",sheet_name="IRCTC Stock Price" )
+
+df.columns = df.columns.str.strip()
+
+# Clean data safely
+for col in df.columns:
+    df[col] = df[col].astype(str).str.replace(",", "").str.replace("K", "000").str.replace("M", "000000")
+    df[col] = pd.to_numeric(df[col], errors="ignore")
+
+# Select numeric columns only
+X = df.select_dtypes(include=['float64', 'int64'])
+
+print("Selected columns for clustering:", X.columns.tolist())
+print("X shape:", X.shape)
+
+# Drop rows with NaN ONLY after selecting numeric columns
+X = X.dropna()
+
+print("After dropna, X shape:", X.shape)
+
+# Make sure X is not empty
+if X.shape[0] == 0:
+    print("ERROR: X is empty. Check numeric columns!")
+    exit()
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+kmeans = KMeans(n_clusters=2, random_state=42, n_init="auto")
+kmeans.fit(X_scaled)
+labels = kmeans.labels_
+print("Silhouette Score :", silhouette_score(X_scaled, labels))
+print("CH Score         :", calinski_harabasz_score(X_scaled, labels))
+print("DB Index         :", davies_bouldin_score(X_scaled, labels))
