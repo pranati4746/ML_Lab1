@@ -1,1 +1,51 @@
+import numpy as np
+from collections import Counter
+import math
+
+# Function to calculate entropy
+def calculate_entropy(data):
+    total = len(data)
+    freq = Counter(data)
+    
+    entropy = 0
+    for count in freq.values():
+        p = count / total
+        entropy -= p * math.log2(p)
+    
+    return entropy
+
+
+# Equal-width binning function (4 bins)
+def equal_width_binning(data, bins=4):
+    min_val = min(data)
+    max_val = max(data)
+    width = (max_val - min_val) / bins
+    
+    binned_data = []
+    
+    for x in data:
+        bin_index = int((x - min_val) / width)
+        
+        # Handle edge case for max value
+        if bin_index == bins:
+            bin_index -= 1
+            
+        binned_data.append(bin_index)
+    
+    return binned_data
+
+
+# MAIN FUNCTION
+def entropy_for_dataset(data, is_continuous=True):
+    if is_continuous:
+        data = equal_width_binning(data, bins=4)
+    
+    return calculate_entropy(data)
+
+
+# Example usage
+data = [10, 20, 30, 40, 50, 60]
+
+entropy_value = entropy_for_dataset(data, is_continuous=True)
+print("Entropy:", entropy_value)
 
