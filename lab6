@@ -1,51 +1,385 @@
-import numpy as np
-from collections import Counter
-import math
+import random
+import heapq
+import networkx as nx
 
-# Function to calculate entropy
-def calculate_entropy(data):
-    total = len(data)
-    freq = Counter(data)
-    
-    entropy = 0
-    for count in freq.values():
-        p = count / total
-        entropy -= p * math.log2(p)
-    
-    return entropy
+from mesa import Agent, Model
+from mesa.time import RandomActivation
+from mesa.space import NetworkGrid
+from mesa.datacollection import DataCollector
+from mesa.visualization.modules import NetworkModule, ChartModule
+from mesa.visualization.ModularVisualization import ModularServer
+from mesa.visualization.UserParam import Slider
 
 
-# Equal-width binning function (4 bins)
-def equal_width_binning(data, bins=4):
-    min_val = min(data)
-    max_val = max(data)
-    width = (max_val - min_val) / bins
-    
-    binned_data = []
-    
-    for x in data:
-        bin_index = int((x - min_val) / width)
-        
-        # Handle edge case for max value
-        if bin_index == bins:
-            bin_index -= 1
-            
-        binned_data.append(bin_index)
-    
-    return binned_data
+# ---------------------------------
+# A* SEARCH
+# ---------------------------------
+
+def heuristic(a, b, graph):
+    try:
+        return nx.shortest_path_length(graph, source=a, target=b)
+    except nx.NetworkXNoPath:
+        return float('inf')
 
 
-# MAIN FUNCTION
-def entropy_for_dataset(data, is_continuous=True):
-    if is_continuous:
-        data = equal_width_binning(data, bins=4)
-    
-    return calculate_entropy(data)
+def astar_path(graph, start, goal):
+
+    open_set = []
+    heapq.heappush(open_set, (0, start))
+
+    came_from = {}
+    g_score = {node: float('inf') for node in graph.nodes()}
+    g_score[start] = 0
+
+    while open_set:
+
+        _, current = heapq.heappop(open_set)
+
+        if current == goal:
+
+            path = [current]
+
+            while current in came_from:
+                current = came_from[current]
+                path.append(current)
+
+            path.reverse()
+            return path
+
+        for neighbor in graph.neighbors(current):
+
+            tentative_g = g_score[current] + 1
+
+            if tentative_g < g_score[neighbor]:
+
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+
+                f_score = tentative_g + heuristic(neighbor, goal, graph)
+
+                heapq.heappush(open_set, (f_score, neighbor))
+
+    return []
 
 
-# Example usage
-data = [10, 20, 30, 40, 50, 60]
+# ---------------------------------
+# AGENTS
+# ---------------------------------
 
-entropy_value = entropy_for_dataset(data, is_continuous=True)
-print("Entropy:", entropy_value)
+class NodeAgent(Agent):
 
+    def __init__(self, unique_id, model):
+        super().__init__(unique_id, model)
+        self.status = "Normal"
+
+    def step(self):
+
+        neighbors = list(self.model.G.neighbors(self.unique_id))
+
+        possible_moves = [
+            node_id for node_id in neighbors
+            if self.model.get_node_agent(node_id).status != "Isolated"
+        ]
+
+        if possible_moves:
+            self.model.grid.move_agent(self, self.random.choice(possible_moves))
+
+
+class IntruderAgent(Agent):
+
+    def step(self):
+
+        node = self.model.get_node_agent(self.pos)
+
+        if node.status == "Normal":
+            node.status = "Compromised"
+
+        neighbors = list(self.model.G.neighbors(self.pos))
+
+        possible_moves = [
+            node_id for node_id in neighbors
+            if self.model.get_node_agent(node_id).status != "Isolated"
+        ]
+
+        if possible_moves:
+            self.model.grid.move_agent(self, self.random.choice(possible_moves))
+
+
+class SecurityAgent(Agent):
+
+    def __init__(self, unique_id, model):
+        super().__init__(unique_id, model)
+        self.state = "Patrolling"
+        self.path = []
+        self.target = None
+
+    def step(self):
+
+        compromised_nodes = [
+            a for a in self.model.schedule.agents
+            if isinstance(a, NodeAgent) and a.status == "Compromised"
+        ]
+
+        if self.state == "Patrolling":
+
+            if compromised_nodes:
+
+                intruders = [
+                    a for a in self.model.schedule.agents
+                    if isinstance(a, IntruderAgent)
+                ]
+
+                if intruders:
+
+                    self.target = intruders[0].pos
+
+                    self.path = astar_path(
+                        self.model.G,
+                        self.pos,
+                        self.target
+                    )
+
+                    if self.path:
+                        self.state = "Containing"
+
+            else:
+
+                neighbors = list(self.model.G.neighbors(self.pos))
+
+                if neighbors:
+                    self.model.grid.move_agent(
+                        self,
+                        self.random.choice(neighbors)
+                    )
+
+        elif self.state == "Containing":
+
+            if self.path:
+
+                next_node = self.path.pop(0)
+
+                self.model.grid.move_agent(self, next_node)
+
+                node = self.model.get_node_agent(self.pos)
+
+                if node.status != "Compromised":
+                    node.status = "Isolated"
+
+            else:
+
+                self.state = "Patrolling"
+                self.target = None
+
+
+# ---------------------------------
+# MODEL
+# ---------------------------------
+
+class CyberSentinelModel(Model):
+
+    def __init__(self,
+                 num_nodes=50,
+                 avg_node_degree=3,
+                 num_intruders=1,
+                 num_security=1):
+
+        super().__init__()
+
+        self.num_nodes = num_nodes
+        self.node_agents = {}
+
+        # RL convergence tracking
+        self.current_episode = 0
+        self.episode_steps = 0
+        self.convergence_history = []
+
+        self.G = nx.barabasi_albert_graph(
+            n=self.num_nodes,
+            m=avg_node_degree
+        )
+
+        self.grid = NetworkGrid(self.G)
+        self.schedule = RandomActivation(self)
+
+        self.G.graph['model'] = self
+
+        for node in self.G.nodes():
+
+            agent = NodeAgent(node, self)
+
+            self.schedule.add(agent)
+            self.grid.place_agent(agent, node)
+
+            self.node_agents[node] = agent
+
+        for i in range(num_intruders):
+
+            intruder = IntruderAgent(self.num_nodes + i, self)
+
+            self.schedule.add(intruder)
+
+            start = self.random.choice(list(self.G.nodes()))
+
+            self.grid.place_agent(intruder, start)
+
+        for i in range(num_security):
+
+            security = SecurityAgent(
+                self.num_nodes + num_intruders + i,
+                self
+            )
+
+            self.schedule.add(security)
+
+            start = self.random.choice(list(self.G.nodes()))
+
+            self.grid.place_agent(security, start)
+
+        self.datacollector = DataCollector(
+
+            model_reporters={
+
+                "Normal": lambda m: sum(
+                    1 for a in m.schedule.agents
+                    if isinstance(a, NodeAgent) and a.status == "Normal"
+                ),
+
+                "Compromised": lambda m: sum(
+                    1 for a in m.schedule.agents
+                    if isinstance(a, NodeAgent) and a.status == "Compromised"
+                ),
+
+                "Isolated": lambda m: sum(
+                    1 for a in m.schedule.agents
+                    if isinstance(a, NodeAgent) and a.status == "Isolated"
+                ),
+
+                "ContainmentTime": lambda m: (
+                    m.convergence_history[-1]
+                    if len(m.convergence_history) > 0
+                    else 0
+                )
+
+            }
+        )
+
+    def get_node_agent(self, node_id):
+        return self.node_agents.get(node_id)
+
+    def step(self):
+
+        self.schedule.step()
+
+        self.episode_steps += 1
+
+        compromised = sum(
+            1 for a in self.schedule.agents
+            if isinstance(a, NodeAgent) and a.status == "Compromised"
+        )
+
+    # record convergence every 20 steps
+        if self.episode_steps % 1 == 0:
+
+            self.convergence_history.append(compromised)
+
+            self.datacollector.collect(self)
+
+
+# ---------------------------------
+# VISUALIZATION
+# ---------------------------------
+
+def network_portrayal(G):
+
+    portrayal = {"nodes": [], "edges": []}
+
+    model = G.graph['model']
+
+    for node_id in G.nodes():
+
+        node = model.get_node_agent(node_id)
+
+        color = {
+            "Normal": "#44FF44",
+            "Compromised": "#FF4444",
+            "Isolated": "#4444FF"
+        }[node.status]
+
+        agents = model.grid.get_cell_list_contents([node_id])
+
+        size = 6
+        shape = "circle"
+
+        if any(isinstance(a, IntruderAgent) for a in agents):
+            color = "yellow"
+            size = 8
+            shape = "star"
+
+        elif any(isinstance(a, SecurityAgent) for a in agents):
+            color = "purple"
+            size = 8
+            shape = "triangle"
+
+        portrayal["nodes"].append({
+            "id": node_id,
+            "size": size,
+            "color": color,
+            "shape": shape
+        })
+
+    portrayal["edges"] = [
+        {
+            "id": i,
+            "source": s,
+            "target": t,
+            "color": "grey"
+        }
+        for i, (s, t) in enumerate(G.edges())
+    ]
+
+    return portrayal
+
+
+network_canvas = NetworkModule(network_portrayal, 500, 500)
+
+# Chart 1: node states
+state_chart = ChartModule([
+    {"Label": "Compromised", "Color": "#FF4444"},
+    {"Label": "Normal", "Color": "#44FF44"},
+    {"Label": "Isolated", "Color": "#4444FF"}
+])
+
+# Chart 2: RL convergence
+convergence_chart = ChartModule([
+    {"Label": "ContainmentTime", "Color": "#FFFF00"}
+])
+
+
+server = ModularServer(
+
+    CyberSentinelModel,
+
+    [network_canvas, state_chart, convergence_chart],
+
+    "CyberSentinel: Network Intrusion Simulation",
+
+    {
+
+        "num_nodes": Slider("Number of Nodes", 50, 20, 100, 5),
+
+        "avg_node_degree": Slider("Average Node Connections", 3, 2, 8, 1),
+
+        "num_intruders": Slider("Number of Intruders", 1, 1, 5, 1),
+
+        "num_security": Slider("Number of Security Agents", 1, 0, 5, 1)
+
+    }
+
+)
+
+server.port = 8521
+
+
+if __name__ == "__main__":
+
+    server.launch()
