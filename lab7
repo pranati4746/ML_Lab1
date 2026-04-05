@@ -1,7 +1,3 @@
-# -------- Step 1: Install libraries --------
-!pip install xgboost catboost
-
-# -------- Step 2: Import --------
 import os
 import numpy as np
 import pandas as pd
@@ -19,8 +15,8 @@ from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
 
-
-data_path = "/content/output"   
+# -------- Step 1: Load Data --------
+data_path = "output"   # your folder path (change if needed)
 
 X = []
 y = []
@@ -33,7 +29,7 @@ for condition in ["rest", "walk"]:
 
         df = pd.read_csv(file_path)
 
-        X.append(df.values.flatten())  # flatten matrix
+        X.append(df.values.flatten())  # convert matrix to 1D
         y.append(0 if condition == "rest" else 1)
 
 X = np.array(X)
@@ -41,9 +37,12 @@ y = np.array(y)
 
 print("Dataset shape:", X.shape)
 
+# -------- Step 2: Train-Test Split --------
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
+
+# -------- Step 3: Models --------
 models = {
     "SVM": (
         SVC(),
@@ -70,7 +69,7 @@ models = {
         {"hidden_layer_sizes": [(50,), (100,)], "activation": ["relu", "tanh"]}
     ),
     "XGBoost": (
-        XGBClassifier(use_label_encoder=False, eval_metric='logloss'),
+        XGBClassifier(eval_metric='logloss'),
         {"n_estimators": [50, 100], "max_depth": [3, 5]}
     ),
     "CatBoost": (
@@ -79,7 +78,7 @@ models = {
     )
 }
 
-# -------- Step 6: Training + Tuning --------
+# -------- Step 4: Training + Tuning --------
 results = []
 
 for name, (model, params) in models.items():
@@ -124,14 +123,12 @@ for name, (model, params) in models.items():
 
     results.append(result)
 
+# -------- Step 5: Save Results --------
 results_df = pd.DataFrame(results)
 
-print("\nFinal Comparison Table:")
+print("\nFinal Results:\n")
 print(results_df)
 
-# Save results
-results_df.to_csv("/content/model_comparison.csv", index=False)
+results_df.to_csv("model_comparison.csv", index=False)
 
-# Download
-from google.colab import files
-files.download("/content/model_comparison.csv")
+print("\nResults saved as model_comparison.csv")
