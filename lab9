@@ -1,0 +1,107 @@
+import numpy as np
+import pandas as pd
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
+from sklearn.ensemble import StackingClassifier
+
+from lime.lime_tabular import LimeTabularExplainer
+
+# -------------------------------
+# 1. Load Dataset
+# -------------------------------
+data = pd.read_csv("final_dataset1.csv")
+
+print("Columns in dataset:", data.columns)
+
+# ✅ Correct target column
+target_column = "Label"
+
+# Split features and target
+X = data.drop(target_column, axis=1)
+y = data[target_column]
+
+feature_names = X.columns.tolist()
+
+# Convert to numpy
+X = X.values
+y = y.values
+
+# -------------------------------
+# 2. Train-Test Split
+# -------------------------------
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# -------------------------------
+# 3. Base Models
+# -------------------------------
+base_models = [
+    ('lr', LogisticRegression(max_iter=1000)),
+    ('dt', DecisionTreeClassifier()),
+    ('svm', SVC(probability=True))
+]
+
+# -------------------------------
+# 4. Stacking Model
+# -------------------------------
+stack_model = StackingClassifier(
+    estimators=base_models,
+    final_estimator=LogisticRegression()
+)
+
+# -------------------------------
+# 5. Pipeline
+# -------------------------------
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('stacking', stack_model)
+])
+
+# -------------------------------
+# 6. Train Model
+# -------------------------------
+pipeline.fit(X_train, y_train)
+
+# -------------------------------
+# 7. Evaluate
+# -------------------------------
+accuracy = pipeline.score(X_test, y_test)
+print("Accuracy:", accuracy)
+
+# -------------------------------
+# 8. LIME Explainer
+# -------------------------------
+explainer = LimeTabularExplainer(
+    X_train,
+    feature_names=feature_names,
+    class_names=['Class 0', 'Class 1'],  # adjust if needed
+    discretize_continuous=True
+)
+
+# Pick a test sample
+i = 0  # safer than 5
+
+exp = explainer.explain_instance(
+    X_test[i],
+    pipeline.predict_proba,
+    num_features=10
+)
+
+# -------------------------------
+# 9. Output
+# -------------------------------
+try:
+    exp.show_in_notebook(show_table=True)
+except:
+    print("Notebook display not available")
+
+exp.save_to_file("lime_explanation.html")
+
+print("LIME explanation saved as lime_explanation.html")
